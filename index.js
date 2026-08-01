@@ -34,6 +34,7 @@ const ANNOUNCEMENTS_CHANNEL_ID = process.env.ANNOUNCEMENTS_CHANNEL_ID || "";
 const CAMPUS_NEWS_CHANNEL_ID = process.env.CAMPUS_NEWS_CHANNEL_ID || "";
 const LEADERBOARD_CHANNEL_ID = process.env.LEADERBOARD_CHANNEL_ID || "";
 const HOMEWORK_CHANNEL_ID = process.env.HOMEWORK_CHANNEL_ID || "";
+const FEATURED_CLIPS_CHANNEL_ID = process.env.FEATURED_CLIPS_CHANNEL_ID || "";
 
 const FRESHMAN_ROLE_ID = process.env.FRESHMAN_ROLE_ID || "";
 const SOPHOMORE_ROLE_ID = process.env.SOPHOMORE_ROLE_ID || "";
@@ -75,6 +76,13 @@ const defaultData = {
   homework: {},
   detentionTimers: {},
   lastRepGiven: {},
+  xp: {},
+  lastXpMessage: {},
+  customRanks: {},
+  badges: {},
+  shopPurchases: {},
+  dailyStats: {},
+  challengeClaims: {},
   scheduledPosts: {
     leaderboardDate: "",
     campusNewsDate: "",
@@ -101,6 +109,13 @@ function loadData() {
       homework: parsed.homework || {},
       detentionTimers: parsed.detentionTimers || {},
       lastRepGiven: parsed.lastRepGiven || {},
+      xp: parsed.xp || {},
+      lastXpMessage: parsed.lastXpMessage || {},
+      customRanks: parsed.customRanks || {},
+      badges: parsed.badges || {},
+      shopPurchases: parsed.shopPurchases || {},
+      dailyStats: parsed.dailyStats || {},
+      challengeClaims: parsed.challengeClaims || {},
       scheduledPosts: {
         ...defaultData.scheduledPosts,
         ...(parsed.scheduledPosts || {}),
@@ -195,6 +210,103 @@ function medal(index) {
   if (index === 2) return "🥉";
   return `**${index + 1}.**`;
 }
+
+
+function getXp(userId) {
+  return Number(data.xp[userId] || 0);
+}
+
+function getLevelFromXp(xp) {
+  return Math.floor(Math.sqrt(Math.max(0, xp) / 100));
+}
+
+function getXpForNextLevel(level) {
+  return Math.pow(level + 1, 2) * 100;
+}
+
+function getUserBadges(userId) {
+  data.badges[userId] ||= [];
+  return data.badges[userId];
+}
+
+function addBadge(userId, badge) {
+  const badges = getUserBadges(userId);
+  if (!badges.includes(badge)) {
+    badges.push(badge);
+    saveData();
+    return true;
+  }
+  return false;
+}
+
+function getDailyStats(userId) {
+  const date = todayKey();
+  const current = data.dailyStats[userId];
+
+  if (!current || current.date !== date) {
+    data.dailyStats[userId] = {
+      date,
+      clips: 0,
+      repGiven: 0,
+      attendance: false,
+    };
+  }
+
+  return data.dailyStats[userId];
+}
+
+function getDailyChallenge() {
+  const challenges = [
+    {
+      key: "attendance",
+      title: "Perfect Attendance",
+      description: "Use `/attendance` today.",
+      reward: 5,
+    },
+    {
+      key: "clip",
+      title: "Campus Creator",
+      description: "Submit one clip using `/clip` today.",
+      reward: 8,
+    },
+    {
+      key: "rep",
+      title: "Support a Student",
+      description: "Give reputation to another student today.",
+      reward: 5,
+    },
+  ];
+
+  const dayNumber = Math.floor(Date.now() / 86_400_000);
+  return challenges[dayNumber % challenges.length];
+}
+
+function hasCompletedChallenge(userId, challenge) {
+  const stats = getDailyStats(userId);
+
+  if (challenge.key === "attendance") return stats.attendance;
+  if (challenge.key === "clip") return stats.clips >= 1;
+  if (challenge.key === "rep") return stats.repGiven >= 1;
+  return false;
+}
+
+const SHOP_ITEMS = {
+  clown: {
+    name: "🤡 Class Clown Badge",
+    price: 25,
+    badge: "🤡 Class Clown",
+  },
+  celebrity: {
+    name: "🌟 Campus Celebrity Badge",
+    price: 75,
+    badge: "🌟 Campus Celebrity",
+  },
+  legend: {
+    name: "👑 Campus Legend Badge",
+    price: 200,
+    badge: "👑 Campus Legend",
+  },
+};
 
 // ============================================================
 // Client
@@ -470,6 +582,174 @@ const commands = [
   new SlashCommandBuilder()
     .setName("campusnews")
     .setDescription("Post campus news now.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder()
+    .setName("setrep")
+    .setDescription("Set a student's reputation to an exact amount.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addUserOption((option) =>
+      option.setName("student").setDescription("Student").setRequired(true)
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("amount")
+        .setDescription("New reputation amount")
+        .setRequired(true)
+        .setMinValue(0)
+        .setMaxValue(1000000)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("giverep")
+    .setDescription("Give a student extra reputation.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addUserOption((option) =>
+      option.setName("student").setDescription("Student").setRequired(true)
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("amount")
+        .setDescription("Amount to add")
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(1000000)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("removerep")
+    .setDescription("Remove reputation from a student.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addUserOption((option) =>
+      option.setName("student").setDescription("Student").setRequired(true)
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("amount")
+        .setDescription("Amount to remove")
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(1000000)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("resetrep")
+    .setDescription("Reset a student's reputation.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addUserOption((option) =>
+      option.setName("student").setDescription("Student").setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("setrank")
+    .setDescription("Assign any server role as a student's displayed rank.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+    .addUserOption((option) =>
+      option.setName("student").setDescription("Student").setRequired(true)
+    )
+    .addRoleOption((option) =>
+      option.setName("role").setDescription("Rank role").setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("clearrank")
+    .setDescription("Remove a student's custom displayed rank.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+    .addUserOption((option) =>
+      option.setName("student").setDescription("Student").setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("rank")
+    .setDescription("View a student's rank, XP and reputation.")
+    .addUserOption((option) =>
+      option.setName("student").setDescription("Student")
+    ),
+
+  new SlashCommandBuilder()
+    .setName("badges")
+    .setDescription("View a student's achievement badges.")
+    .addUserOption((option) =>
+      option.setName("student").setDescription("Student")
+    ),
+
+  new SlashCommandBuilder()
+    .setName("shop")
+    .setDescription("View the campus reputation shop."),
+
+  new SlashCommandBuilder()
+    .setName("buy")
+    .setDescription("Buy a campus badge using reputation.")
+    .addStringOption((option) =>
+      option
+        .setName("item")
+        .setDescription("Shop item")
+        .setRequired(true)
+        .addChoices(
+          { name: "🤡 Class Clown Badge — 25 rep", value: "clown" },
+          { name: "🌟 Campus Celebrity Badge — 75 rep", value: "celebrity" },
+          { name: "👑 Campus Legend Badge — 200 rep", value: "legend" }
+        )
+    ),
+
+  new SlashCommandBuilder()
+    .setName("challenge")
+    .setDescription("View today's campus challenge."),
+
+  new SlashCommandBuilder()
+    .setName("claimchallenge")
+    .setDescription("Claim today's completed challenge reward."),
+
+  new SlashCommandBuilder()
+    .setName("halloffame")
+    .setDescription("View the top 25 students of all time."),
+
+  new SlashCommandBuilder()
+    .setName("featureclip")
+    .setDescription("Feature a submitted clip.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    .addStringOption((option) =>
+      option
+        .setName("message_id")
+        .setDescription("Clip message ID")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("unfeatureclip")
+    .setDescription("Remove a clip's featured status.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    .addStringOption((option) =>
+      option
+        .setName("message_id")
+        .setDescription("Clip message ID")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("deleteclip")
+    .setDescription("Delete a clip submission.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    .addStringOption((option) =>
+      option
+        .setName("message_id")
+        .setDescription("Clip message ID")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("clipstats")
+    .setDescription("View stats for a submitted clip.")
+    .addStringOption((option) =>
+      option
+        .setName("message_id")
+        .setDescription("Clip message ID")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("dashboard")
+    .setDescription("View the Discord University admin dashboard.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder()
@@ -804,7 +1084,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
           {
             name: "📚 Staff Activities",
             value:
-              "`/assignhomework` `/completehomework` `/campusnews`",
+              "`/assignhomework` `/completehomework` `/campusnews` `/dashboard`",
+          },
+          {
+            name: "👑 V3 Administration",
+            value:
+              "`/setrep` `/giverep` `/removerep` `/resetrep` `/setrank` `/clearrank`",
+          },
+          {
+            name: "🏆 V3 Student Features",
+            value:
+              "`/rank` `/badges` `/shop` `/buy` `/challenge` `/claimchallenge` `/halloffame`",
+          },
+          {
+            name: "🎬 V3 Clip Staff",
+            value:
+              "`/featureclip` `/unfeatureclip` `/deleteclip` `/clipstats`",
           }
         )
         .setFooter({ text: "Discord University" });
@@ -1254,6 +1549,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       setRep(user.id, getRep(user.id) + 1);
       data.lastRepGiven[cooldownKey] = Date.now();
+      getDailyStats(interaction.user.id).repGiven += 1;
       saveData();
 
       const member = await interaction.guild.members
@@ -1309,6 +1605,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         streak,
       };
 
+      getDailyStats(interaction.user.id).attendance = true;
       setRep(interaction.user.id, getRep(interaction.user.id) + reward);
       saveData();
 
@@ -1355,6 +1652,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const reputation = getRep(user.id);
       const warnings = data.warnings[user.id] || [];
       const student = data.students[user.id];
+      const xp = getXp(user.id);
+      const level = getLevelFromXp(xp);
+      const customRank = data.customRanks[user.id];
+      const badges = getUserBadges(user.id);
 
       const clips = Object.values(data.clips).filter(
         (clip) => clip.authorId === user.id
@@ -1396,6 +1697,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
             inline: true,
           },
           {
+            name: "Assigned Rank",
+            value: customRank?.roleId
+              ? `<@&${customRank.roleId}>`
+              : "No custom rank",
+            inline: true,
+          },
+          {
+            name: "Level / XP",
+            value: `Level **${level}** • ${xp}/${getXpForNextLevel(level)} XP`,
+            inline: true,
+          },
+          {
             name: "Major",
             value: student?.major || "Not enrolled",
             inline: true,
@@ -1425,6 +1738,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
             inline: true,
           }
         );
+
+      if (badges.length > 0) {
+        embed.addFields({
+          name: "Achievement Badges",
+          value: badges.slice(0, 15).join(" • "),
+        });
+      }
 
       if (student?.bio) {
         embed.addFields({
@@ -1521,6 +1841,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await message.edit({
         components: [new ActionRowBuilder().addComponents(realButton)],
       });
+
+      getDailyStats(interaction.user.id).clips += 1;
 
       data.clips[message.id] = {
         messageId: message.id,
@@ -1741,6 +2063,639 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    if (
+      ["setrep", "giverep", "removerep", "resetrep"].includes(commandName)
+    ) {
+      if (!isStaff(interaction.member)) {
+        await interaction.reply({
+          content: "You are not campus staff.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const user = interaction.options.getUser("student", true);
+      const oldAmount = getRep(user.id);
+      let newAmount = oldAmount;
+
+      if (commandName === "setrep") {
+        newAmount = interaction.options.getInteger("amount", true);
+      } else if (commandName === "giverep") {
+        newAmount =
+          oldAmount + interaction.options.getInteger("amount", true);
+      } else if (commandName === "removerep") {
+        newAmount =
+          oldAmount - interaction.options.getInteger("amount", true);
+      } else {
+        newAmount = 0;
+      }
+
+      setRep(user.id, newAmount);
+      saveData();
+
+      const member = await interaction.guild.members
+        .fetch(user.id)
+        .catch(() => null);
+
+      if (member) await syncReputationRole(member);
+
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor("#FACC15")
+            .setTitle("⭐ REPUTATION UPDATED")
+            .setDescription(`${user}'s reputation was updated.`)
+            .addFields(
+              { name: "Previous", value: `${oldAmount}`, inline: true },
+              { name: "New", value: `${getRep(user.id)}`, inline: true },
+              {
+                name: "Automatic Status",
+                value: getStudentStatus(getRep(user.id)),
+                inline: true,
+              },
+              { name: "Updated By", value: `${interaction.user}` }
+            )
+            .setTimestamp(),
+        ],
+      });
+      return;
+    }
+
+    if (commandName === "setrank") {
+      if (!isStaff(interaction.member)) {
+        await interaction.reply({
+          content: "You are not campus staff.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const user = interaction.options.getUser("student", true);
+      const role = interaction.options.getRole("role", true);
+      const member = await interaction.guild.members
+        .fetch(user.id)
+        .catch(() => null);
+
+      if (!member) {
+        await interaction.reply({
+          content: "That student is not in the server.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (role.id === interaction.guild.id || role.managed) {
+        await interaction.reply({
+          content: "Choose a normal server role, not @everyone or a managed role.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const botMember = interaction.guild.members.me;
+      if (!botMember || botMember.roles.highest.comparePositionTo(role) <= 0) {
+        await interaction.reply({
+          content: "Move the bot role above the selected rank role.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const oldRank = data.customRanks[user.id];
+      if (
+        oldRank?.roleId &&
+        oldRank.roleId !== role.id &&
+        member.roles.cache.has(oldRank.roleId)
+      ) {
+        await member.roles
+          .remove(oldRank.roleId, "Custom rank changed")
+          .catch(() => {});
+      }
+
+      await member.roles.add(role, `Custom rank set by ${interaction.user.tag}`);
+
+      data.customRanks[user.id] = {
+        roleId: role.id,
+        roleName: role.name,
+        setBy: interaction.user.id,
+        setAt: Date.now(),
+      };
+      saveData();
+
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(role.color || BOT_COLOR)
+            .setTitle("🎓 CUSTOM RANK ASSIGNED")
+            .setDescription(`${user} has been assigned the rank ${role}.`)
+            .addFields({
+              name: "Profile Display",
+              value: "This role will now appear as their assigned rank on `/profile`, `/transcript`, and `/rank`.",
+            })
+            .setTimestamp(),
+        ],
+      });
+      return;
+    }
+
+    if (commandName === "clearrank") {
+      if (!isStaff(interaction.member)) {
+        await interaction.reply({
+          content: "You are not campus staff.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const user = interaction.options.getUser("student", true);
+      const member = await interaction.guild.members
+        .fetch(user.id)
+        .catch(() => null);
+      const rank = data.customRanks[user.id];
+
+      if (!rank) {
+        await interaction.reply({
+          content: "That student does not have a custom rank.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (member?.roles.cache.has(rank.roleId)) {
+        await member.roles
+          .remove(rank.roleId, "Custom rank cleared")
+          .catch(() => {});
+      }
+
+      delete data.customRanks[user.id];
+      saveData();
+
+      await interaction.reply({
+        content: `${user}'s custom rank has been cleared.`,
+      });
+      return;
+    }
+
+    if (commandName === "rank") {
+      const user =
+        interaction.options.getUser("student") || interaction.user;
+      const rep = getRep(user.id);
+      const xp = getXp(user.id);
+      const level = getLevelFromXp(xp);
+      const customRank = data.customRanks[user.id];
+
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(BOT_COLOR)
+            .setTitle(`🎓 ${user.username}'s Campus Rank`)
+            .setThumbnail(user.displayAvatarURL({ size: 256 }))
+            .addFields(
+              {
+                name: "Assigned Rank",
+                value: customRank?.roleId
+                  ? `<@&${customRank.roleId}>`
+                  : "No custom rank",
+                inline: true,
+              },
+              {
+                name: "Automatic Status",
+                value: getStudentStatus(rep),
+                inline: true,
+              },
+              { name: "Reputation", value: `${rep}`, inline: true },
+              {
+                name: "Level",
+                value: `${level}`,
+                inline: true,
+              },
+              {
+                name: "XP Progress",
+                value: `${xp}/${getXpForNextLevel(level)}`,
+                inline: true,
+              }
+            )
+            .setTimestamp(),
+        ],
+      });
+      return;
+    }
+
+    if (commandName === "badges") {
+      const user =
+        interaction.options.getUser("student") || interaction.user;
+      const badges = getUserBadges(user.id);
+
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor("#F59E0B")
+            .setTitle(`🎖️ ${user.username}'s Badges`)
+            .setDescription(
+              badges.length
+                ? badges.join("\n")
+                : "This student has not unlocked any badges yet."
+            )
+            .setTimestamp(),
+        ],
+      });
+      return;
+    }
+
+    if (commandName === "shop") {
+      const lines = Object.entries(SHOP_ITEMS).map(
+        ([key, item]) =>
+          `**${item.name}** — ${item.price} reputation\nBuy with \`/buy item:${key}\``
+      );
+
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor("#10B981")
+            .setTitle("🛒 Campus Reputation Shop")
+            .setDescription(lines.join("\n\n"))
+            .setFooter({
+              text: `Your balance: ${getRep(interaction.user.id)} reputation`,
+            }),
+        ],
+      });
+      return;
+    }
+
+    if (commandName === "buy") {
+      const itemKey = interaction.options.getString("item", true);
+      const item = SHOP_ITEMS[itemKey];
+
+      if (!item) {
+        await interaction.reply({
+          content: "That shop item does not exist.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const badges = getUserBadges(interaction.user.id);
+      if (badges.includes(item.badge)) {
+        await interaction.reply({
+          content: "You already own that badge.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const balance = getRep(interaction.user.id);
+      if (balance < item.price) {
+        await interaction.reply({
+          content: `You need ${item.price} reputation, but you only have ${balance}.`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      setRep(interaction.user.id, balance - item.price);
+      addBadge(interaction.user.id, item.badge);
+      saveData();
+
+      const member = await interaction.guild.members
+        .fetch(interaction.user.id)
+        .catch(() => null);
+      if (member) await syncReputationRole(member);
+
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor("#10B981")
+            .setTitle("✅ SHOP PURCHASE")
+            .setDescription(
+              `${interaction.user} purchased **${item.name}** for **${item.price} reputation**.`
+            )
+            .addFields({
+              name: "Remaining Reputation",
+              value: `${getRep(interaction.user.id)}`,
+            })
+            .setTimestamp(),
+        ],
+      });
+      return;
+    }
+
+    if (commandName === "challenge") {
+      const challenge = getDailyChallenge();
+      const completed = hasCompletedChallenge(
+        interaction.user.id,
+        challenge
+      );
+
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor("#3B82F6")
+            .setTitle(`🎯 Daily Challenge: ${challenge.title}`)
+            .setDescription(challenge.description)
+            .addFields(
+              {
+                name: "Reward",
+                value: `+${challenge.reward} reputation`,
+                inline: true,
+              },
+              {
+                name: "Status",
+                value: completed ? "✅ Completed" : "⏳ In progress",
+                inline: true,
+              }
+            )
+            .setFooter({
+              text: "Use /claimchallenge after completing it.",
+            }),
+        ],
+      });
+      return;
+    }
+
+    if (commandName === "claimchallenge") {
+      const challenge = getDailyChallenge();
+      const claimKey = `${todayKey()}:${interaction.user.id}`;
+
+      if (data.challengeClaims[claimKey]) {
+        await interaction.reply({
+          content: "You already claimed today's challenge.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (!hasCompletedChallenge(interaction.user.id, challenge)) {
+        await interaction.reply({
+          content: `You have not completed today's challenge: **${challenge.title}**.`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      data.challengeClaims[claimKey] = true;
+      setRep(
+        interaction.user.id,
+        getRep(interaction.user.id) + challenge.reward
+      );
+      addBadge(interaction.user.id, "🎯 Challenge Completed");
+      saveData();
+
+      const member = await interaction.guild.members
+        .fetch(interaction.user.id)
+        .catch(() => null);
+      if (member) await syncReputationRole(member);
+
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor("#22C55E")
+            .setTitle("🎯 CHALLENGE REWARD CLAIMED")
+            .setDescription(
+              `${interaction.user} earned **+${challenge.reward} reputation** for completing **${challenge.title}**.`
+            )
+            .setTimestamp(),
+        ],
+      });
+      return;
+    }
+
+    if (commandName === "halloffame") {
+      const entries = Object.entries(data.reputation)
+        .sort((a, b) => Number(b[1]) - Number(a[1]))
+        .slice(0, 25);
+
+      const lines = entries.map(
+        ([userId, rep], index) =>
+          `${medal(index)} <@${userId}> — **${rep} rep**`
+      );
+
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor("#FFD700")
+            .setTitle("👑 Discord University Hall of Fame")
+            .setDescription(
+              lines.length ? lines.join("\n") : "No students are ranked yet."
+            )
+            .setFooter({ text: "Top 25 students of all time" })
+            .setTimestamp(),
+        ],
+      });
+      return;
+    }
+
+    if (
+      ["featureclip", "unfeatureclip", "deleteclip", "clipstats"].includes(
+        commandName
+      )
+    ) {
+      const messageId = interaction.options.getString("message_id", true);
+      const clip = data.clips[messageId];
+
+      if (!clip) {
+        await interaction.reply({
+          content: "That clip message ID is not being tracked.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (commandName === "clipstats") {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor("#EC4899")
+              .setTitle("🎬 Clip Statistics")
+              .setDescription(clip.caption)
+              .addFields(
+                { name: "Author", value: `<@${clip.authorId}>`, inline: true },
+                {
+                  name: "Campus Likes",
+                  value: `${clip.likes || 0}`,
+                  inline: true,
+                },
+                {
+                  name: "Featured",
+                  value: clip.featured ? "Yes" : "No",
+                  inline: true,
+                },
+                {
+                  name: "Original",
+                  value: `[Open Submission](https://discord.com/channels/${clip.guildId}/${clip.channelId}/${clip.messageId})`,
+                }
+              )
+              .setTimestamp(),
+          ],
+        });
+        return;
+      }
+
+      if (!isStaff(interaction.member)) {
+        await interaction.reply({
+          content: "You are not campus staff.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (commandName === "featureclip") {
+        clip.featured = true;
+        clip.featuredAt = Date.now();
+        clip.featuredBy = interaction.user.id;
+
+        if (FEATURED_CLIPS_CHANNEL_ID) {
+          const featuredChannel = interaction.guild.channels.cache.get(
+            FEATURED_CLIPS_CHANNEL_ID
+          );
+
+          if (featuredChannel?.isTextBased()) {
+            await featuredChannel.send({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor("#FFD700")
+                  .setTitle("🌟 FEATURED CAMPUS CLIP")
+                  .setDescription(clip.caption)
+                  .addFields(
+                    { name: "Creator", value: `<@${clip.authorId}>`, inline: true },
+                    {
+                      name: "Campus Likes",
+                      value: `${clip.likes || 0}`,
+                      inline: true,
+                    },
+                    {
+                      name: "Watch",
+                      value: `[Open Clip](${clip.link})`,
+                    }
+                  )
+                  .setTimestamp(),
+              ],
+            });
+          }
+        }
+
+        addBadge(clip.authorId, "🌟 Featured Creator");
+        saveData();
+
+        await interaction.reply({
+          content: `Clip \`${messageId}\` is now featured.`,
+        });
+        return;
+      }
+
+      if (commandName === "unfeatureclip") {
+        clip.featured = false;
+        saveData();
+
+        await interaction.reply({
+          content: `Clip \`${messageId}\` is no longer featured.`,
+        });
+        return;
+      }
+
+      if (commandName === "deleteclip") {
+        const channel = interaction.guild.channels.cache.get(clip.channelId);
+        if (channel?.isTextBased()) {
+          const message = await channel.messages
+            .fetch(messageId)
+            .catch(() => null);
+          if (message) await message.delete().catch(() => {});
+        }
+
+        delete data.clips[messageId];
+        saveData();
+
+        await interaction.reply({
+          content: `Clip \`${messageId}\` was deleted from the database.`,
+          ephemeral: true,
+        });
+        return;
+      }
+    }
+
+    if (commandName === "dashboard") {
+      if (!isStaff(interaction.member)) {
+        await interaction.reply({
+          content: "You are not campus staff.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const today = todayKey();
+      const attendanceToday = Object.values(data.attendance).filter(
+        (record) => record.date === today
+      ).length;
+      const activeDetentions = Object.keys(data.detentionTimers).length;
+      const activeHomework = Object.values(data.homework).filter(
+        (assignment) => Number(assignment.deadline) > Date.now()
+      ).length;
+      const totalWarnings = Object.values(data.warnings).reduce(
+        (total, warnings) => total + warnings.length,
+        0
+      );
+      const featuredClips = Object.values(data.clips).filter(
+        (clip) => clip.featured
+      ).length;
+
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(BOT_COLOR)
+            .setTitle("📊 Discord University Dashboard")
+            .addFields(
+              {
+                name: "Enrolled Students",
+                value: `${Object.keys(data.students).length}`,
+                inline: true,
+              },
+              {
+                name: "Tracked Students",
+                value: `${Object.keys(data.reputation).length}`,
+                inline: true,
+              },
+              {
+                name: "Attendance Today",
+                value: `${attendanceToday}`,
+                inline: true,
+              },
+              {
+                name: "Submitted Clips",
+                value: `${Object.keys(data.clips).length}`,
+                inline: true,
+              },
+              {
+                name: "Featured Clips",
+                value: `${featuredClips}`,
+                inline: true,
+              },
+              {
+                name: "Active Homework",
+                value: `${activeHomework}`,
+                inline: true,
+              },
+              {
+                name: "Total Warnings",
+                value: `${totalWarnings}`,
+                inline: true,
+              },
+              {
+                name: "Active Detentions",
+                value: `${activeDetentions}`,
+                inline: true,
+              },
+              {
+                name: "Custom Ranks",
+                value: `${Object.keys(data.customRanks).length}`,
+                inline: true,
+              }
+            )
+            .setTimestamp(),
+        ],
+        ephemeral: true,
+      });
+      return;
+    }
+
     if (commandName === "campusnews") {
       if (!isStaff(interaction.member)) {
         await interaction.reply({
@@ -1790,6 +2745,66 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 // ============================================================
+// Chat XP and automatic achievements
+// ============================================================
+client.on(Events.MessageCreate, async (message) => {
+  try {
+    if (!message.guild || message.author.bot) return;
+
+    const userId = message.author.id;
+    const lastAward = Number(data.lastXpMessage[userId] || 0);
+
+    if (Date.now() - lastAward < 60_000) return;
+
+    const oldXp = getXp(userId);
+    const oldLevel = getLevelFromXp(oldXp);
+    const gained = 5 + Math.floor(Math.random() * 6);
+    const newXp = oldXp + gained;
+    const newLevel = getLevelFromXp(newXp);
+
+    data.xp[userId] = newXp;
+    data.lastXpMessage[userId] = Date.now();
+
+    if (newLevel > oldLevel) {
+      addBadge(userId, `⭐ Reached Level ${newLevel}`);
+
+      await message.channel
+        .send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(BOT_COLOR)
+              .setTitle("⭐ LEVEL UP")
+              .setDescription(
+                `${message.author} reached **Level ${newLevel}** at Discord University!`
+              )
+              .setTimestamp(),
+          ],
+        })
+        .catch(() => {});
+    }
+
+    const clips = Object.values(data.clips).filter(
+      (clip) => clip.authorId === userId
+    );
+    const likes = clips.reduce(
+      (total, clip) => total + Number(clip.likes || 0),
+      0
+    );
+
+    if (clips.length >= 1) addBadge(userId, "🎥 First Clip");
+    if (likes >= 100) addBadge(userId, "🔥 100 Clip Likes");
+    if (getRep(userId) >= 100) addBadge(userId, "🎓 Graduate");
+    if ((data.attendance[`${message.guild.id}:${userId}`]?.streak || 0) >= 7) {
+      addBadge(userId, "📅 7 Day Attendance");
+    }
+
+    saveData();
+  } catch (error) {
+    console.error("XP system error:", error);
+  }
+});
+
+// ============================================================
 // Startup
 // ============================================================
 client.once(Events.ClientReady, async (readyClient) => {
@@ -1799,7 +2814,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   startDailyScheduler();
   await postDailyContent(false);
 
-  console.log("Discord University v2 is ready.");
+  console.log("Discord University v3 is ready.");
 });
 
 client.on(Events.Error, console.error);
@@ -1810,7 +2825,7 @@ process.on("uncaughtException", console.error);
 const app = express();
 
 app.get("/", (_request, response) => {
-  response.status(200).send("Discord University bot v2 is online.");
+  response.status(200).send("Discord University bot v3 is online.");
 });
 
 app.get("/health", (_request, response) => {
