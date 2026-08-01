@@ -1,0 +1,17 @@
+{
+  "name": "discord-university-bot",
+  "version": "1.0.0",
+  "description": "Discord University campus bot with detention, reputation and clip systems.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.22.1",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0"
+  }
+}
